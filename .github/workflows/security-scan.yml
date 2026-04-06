@@ -1,0 +1,83 @@
+---
+# Security Scan — Checkov IaC Policy Enforcement
+#
+# Runs Checkov on every PR and push to main.
+# - HIGH/CRITICAL findings: hard fail (blocks merge)
+# - LOW/MEDIUM findings: soft fail (surfaced as warnings)
+# - SARIF results uploaded to GitHub Security tab
+#
+# Demonstrates: CVS Health JD requirement — "implements security controls,
+# vulnerability scanning"
+
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "envs/**"
+      - "global/**"
+      - "security/**"
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly full scan — Sunday 02:00 UTC
+    - cron: "0 2 * * 0"
+
+permissions:
+  contents: read
+  security-events: write  # required to upload SARIF to GitHub Security tab
+
+jobs:
+  checkov:
+    name: Checkov IaC Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create reports directory
+        run: mkdir -p security/reports
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          config_file: security/checkov-config.yaml
+          output_format: cli,sarif,junitxml
+          output_file_path: security/reports/
+          # Hard-fail on HIGH and CRITICAL (soft-fail-on LOW/MEDIUM set in config)
+          soft_fail: false
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()  # upload even on failure so findings are visible
+        with:
+          sarif_file: security/reports/results_sarif.sarif
+          category: checkov
+
+      - name: Upload JUnit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checkov-junit-${{ github.run_number }}
+          path: security/reports/results_junitxml.xml
+          retention-days: 30
+
+      - name: Summarise results
+        if: always()
+        run: |
+          echo "## Checkov Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f security/reports/results_junitxml.xml ]; then
+            PASSED=$(grep -c 'testcase' security/reports/results_junitxml.xml || echo 0)
+            FAILED=$(grep -c 'failure' security/reports/results_junitxml.xml || echo 0)
+            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| ✅ Passed | ${PASSED} |" >> $GITHUB_STEP_SUMMARY
+            echo "| ❌ Failed | ${FAILED} |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "_See the Security tab for full findings._" >> $GITHUB_STEP_SUMMARY
