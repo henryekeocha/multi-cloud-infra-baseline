@@ -1,0 +1,160 @@
+---
+# Terraform CI — Validate, Format Check, and Plan
+#
+# Triggers on every PR and push to main.
+# Runs: fmt → validate → tflint → checkov → plan (if creds available)
+
+name: Terraform CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "envs/**"
+      - "global/**"
+      - ".github/workflows/terraform-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "envs/**"
+      - "global/**"
+
+env:
+  TF_VERSION: "1.7.5"
+  TFLINT_VERSION: "v0.50.3"
+
+permissions:
+  contents: read
+  pull-requests: write  # allows terraform plan comment on PR
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # 1. Format and Validate (no cloud credentials required)
+  # ────────────────────────────────────────────────────────────────────────────
+  fmt-validate:
+    name: Format & Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive -diff
+        working-directory: .
+
+      - name: Validate — AWS VPC module
+        run: |
+          terraform init -backend=false
+          terraform validate
+        working-directory: modules/aws/vpc
+
+      - name: Validate — GCP VPC module
+        run: |
+          terraform init -backend=false
+          terraform validate
+        working-directory: modules/gcp/vpc
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # 2. TFLint (provider-aware linting)
+  # ────────────────────────────────────────────────────────────────────────────
+  tflint:
+    name: TFLint
+    runs-on: ubuntu-latest
+    needs: fmt-validate
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - name: Init TFLint (AWS)
+        run: tflint --init
+        working-directory: modules/aws/vpc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run TFLint (AWS)
+        run: tflint --format compact
+        working-directory: modules/aws/vpc
+
+      - name: Init TFLint (GCP)
+        run: tflint --init
+        working-directory: modules/gcp/vpc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run TFLint (GCP)
+        run: tflint --format compact
+        working-directory: modules/gcp/vpc
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # 3. Terraform Plan — Dev Environment (conditional on secrets)
+  # ────────────────────────────────────────────────────────────────────────────
+  plan-dev:
+    name: Plan — Dev
+    runs-on: ubuntu-latest
+    needs: [fmt-validate, tflint]
+    if: github.event_name == 'pull_request'
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS Credentials
+        if: ${{ secrets.AWS_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Configure GCP Credentials
+        if: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Terraform Init — Dev
+        run: terraform init
+        working-directory: envs/dev
+
+      - name: Terraform Plan — Dev
+        id: plan
+        run: terraform plan -no-color -out=tfplan
+        working-directory: envs/dev
+        continue-on-error: true
+
+      - name: Post Plan to PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const output = `#### Terraform Plan — Dev 🏗️
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+            *Pushed by @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })

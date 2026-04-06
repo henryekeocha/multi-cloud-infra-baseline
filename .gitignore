@@ -1,0 +1,39 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Sensitive variable files — never commit credentials
+*.tfvars
+!example.tfvars
+*.tfvars.json
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Checkov reports
+security/reports/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker
+monitoring/grafana/data/
+monitoring/prometheus/data/

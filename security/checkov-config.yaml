@@ -1,0 +1,61 @@
+---
+# Checkov Configuration — multi-cloud-infra-baseline
+# https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html
+#
+# Run locally:   checkov -d . --config-file security/checkov-config.yaml
+# Run in CI:     see .github/workflows/security-scan.yml
+
+# ── Output ──────────────────────────────────────────────────────────────────
+output:
+  - cli
+  - junitxml       # consumed by GitHub Actions test reporter
+  - sarif           # uploaded to GitHub Code Scanning / Security tab
+
+output-file-path: security/reports/
+
+# ── Scope ────────────────────────────────────────────────────────────────────
+directory:
+  - modules/
+  - envs/
+  - global/
+
+# Frameworks to scan
+framework:
+  - terraform
+  - dockerfile
+  - github_actions
+
+# ── Severity Gate ────────────────────────────────────────────────────────────
+# Block CI on HIGH and CRITICAL findings only; MEDIUM/LOW surfaced as warnings
+soft-fail-on:
+  - LOW
+  - MEDIUM
+
+# ── Skipped Checks (with justification) ─────────────────────────────────────
+# Skip list is intentionally narrow. Each skip requires a documented reason.
+# Format: CHECK_ID: "Reason | Ticket | Expiry"
+skip-check:
+  # CKV_AWS_135: "VPC Flow Logs — managed by aws_flow_log resource, not vpc resource attribute"
+  - CKV_AWS_135
+  # CKV_GCP_62: "GCS backend bucket logging — bootstrap bucket; logging separate"
+  - CKV_GCP_62
+  # CKV2_AWS_11: "VPC Flow Log — covered by dedicated aws_flow_log resource"
+  - CKV2_AWS_11
+
+# ── Checks to Enforce Explicitly ─────────────────────────────────────────────
+# These are high-signal checks relevant to healthcare/PCI environments.
+check:
+  # AWS
+  - CKV_AWS_73   # VPC Flow Logs enabled
+  - CKV_AWS_130  # Subnet should not assign public IPs
+  - CKV_AWS_148  # Default SG restricts all traffic
+  - CKV_AWS_111  # IAM policies not too permissive
+  - CKV_AWS_109  # IAM policies not wildcard resources
+  # GCP
+  - CKV_GCP_26   # VPC Flow Logs enabled per subnet
+  - CKV_GCP_74   # Private Google Access enabled
+  - CKV_GCP_88   # Default-deny firewall rules
+  - CKV_GCP_2    # No unrestricted SSH (port 22) to 0.0.0.0/0
+  - CKV_GCP_77   # DNS query logging
+  # GitHub Actions
+  - CKV2_GHA_1   # GitHub Actions: no unverified action pinning

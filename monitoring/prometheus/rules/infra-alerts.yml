@@ -1,0 +1,93 @@
+---
+# Prometheus Alerting Rules — Cloud Infrastructure
+#
+# Covers the core SLOs for multi-cloud network infrastructure.
+# Alerts are intentionally conservative for a baseline; tune thresholds
+# per-environment before production rollout.
+
+groups:
+  - name: infrastructure.availability
+    interval: 30s
+    rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Instance {{ $labels.instance }} is down"
+          description: "{{ $labels.instance }} (job={{ $labels.job }}) has been unreachable for more than 2 minutes."
+          runbook: "https://github.com/henryekeocha/multi-cloud-infra-baseline/blob/main/docs/runbooks/instance-down.md"
+
+  - name: infrastructure.resources
+    interval: 60s
+    rules:
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High CPU on {{ $labels.instance }}"
+          description: "CPU usage is {{ printf \"%.1f\" $value }}% on {{ $labels.instance }} for the past 5 minutes."
+
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ printf \"%.1f\" $value }}% on {{ $labels.instance }}."
+
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 15
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Root filesystem has {{ printf \"%.1f\" $value }}% free on {{ $labels.instance }}."
+
+      - alert: DiskSpaceCritical
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 5
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Critical disk space on {{ $labels.instance }}"
+          description: "Root filesystem has {{ printf \"%.1f\" $value }}% free — immediate action required."
+
+  - name: infrastructure.network
+    interval: 60s
+    rules:
+      - alert: HighNetworkRxErrors
+        expr: |
+          rate(node_network_receive_errs_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Network receive errors on {{ $labels.instance }}"
+          description: "Interface {{ $labels.device }} is seeing {{ printf \"%.0f\" $value }} receive errors/sec."
+
+      - alert: HighNetworkTxErrors
+        expr: |
+          rate(node_network_transmit_errs_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Network transmit errors on {{ $labels.instance }}"
+          description: "Interface {{ $labels.device }} is seeing {{ printf \"%.0f\" $value }} transmit errors/sec."
